@@ -1,0 +1,227 @@
+/* detections */
+.detection-layout {
+  display: grid;
+  grid-template-columns: 1fr 282px;
+  gap: 14px;
+}
+.detection-main {
+  min-height: 630px;
+}
+.detection-title {
+  padding: 23px 24px 18px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+.rule-type {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--blue);
+  font: 600 9px var(--mono);
+  letter-spacing: 0.1em;
+}
+.detection-title h2 {
+  font: 600 21px var(--display);
+  margin: 9px 0 8px;
+  letter-spacing: -0.02em;
+}
+.detection-title h2 span {
+  color: #8ba0ad;
+  font-weight: 500;
+}
+.detection-title p {
+  color: #6f8594;
+  font-size: 10px;
+  margin: 0;
+}
+.detection-title p i {
+  display: inline-block;
+  width: 3px;
+  height: 3px;
+  background: #587182;
+  border-radius: 50%;
+  margin: 0 8px;
+  vertical-align: middle;
+}
+.detection-actions {
+  display: flex;
+  gap: 8px;
+}
+.tabs {
+  display: flex;
+  gap: 2px;
+  border-top: 1px solid #273948;
+  border-bottom: 1px solid #273948;
+  padding: 0 15px;
+  background: #101c26;
+}
+.tabs button {
+  height: 43px;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: #708594;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+}
+.tabs button.active {
+  border-bottom-color: #fff;
+  color: #eef8fc;
+  background: #1b2b3a;
+}
+.detection-content {
+  padding: 19px 24px;
+}
+.summary-block h3,
+.reference-block h3,
+.logic-block h3 {
+  font: 600 14px var(--display);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 11px;
+}
+.summary-block h3 svg {
+  color: #d8a94b;
+}
+.summary-block h3 span {
+  font: 9px var(--mono);
+  color: #58bfaa;
+  background: #173a3a;
+  padding: 4px 6px;
+  border-radius: 3px;
+  margin-left: 3px;
+}
+.summary-block p {
+  color: #b2c1cb;
+  line-height: 1.7;
+  font-size: 12px;
+  max-width: 900px;
+  margin: 0;
+}
+.reference-block {
+  margin-top: 28px;
+}
+.reference-block h3 {
+  margin-bottom: 10px;
+}
+.reference-block a {
+  font-size: 11px;
+  text-decoration: underline;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.logic-block {
+  margin-top: 28px;
+}
+.logic-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.logic-head > span {
+  color: #658498;
+  font: 9px var(--mono);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.logic-block pre {
+  margin: 0;
+  background: #0b141c;
+  border: 1px solid #233645;
+  border-radius: 4px;
+  padding: 14px 17px;
+  color: #9ab0bd;
+  line-height: 2.55;
+  font: 12px var(--mono);
+}
+.logic-block code span {
+  color: #c9a0ff;
+}
+.logic-block code em {
+  color: #c9a0ff;
+  font-style: normal;
+}
+.logic-block code b {
+  color: #4ec9b0;
+}
+.logic-block code strong {
+  color: #7ee787;
+  font-weight: 400;
+}
+.logic-block code mark {
+  color: #ff7b72;
+  background: transparent;
+}
+.rail-card {
+  margin-bottom: 14px;
+}
+.enabled-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 15px;
+  border-bottom: 1px solid #263746;
+}
+.enabled-row b {
+  display: block;
+  font-size: 12px;
+}
+.enabled-row span:not(.switch) {
+  display: block;
+  color: #5f7c8b;
+  font-size: 10px;
+  margin-top: 4px;
+}
+.rail-actions {
+  display: flex;
+  gap: 8px;
+  padding: 13px 15px;
+}
+.rail-actions .button {
+  flex: 1;
+  justify-content: center;
+  font-size: 9px;
+  letter-spacing: 0.05em;
+}
+.details-list {
+  padding: 5px 15px 15px;
+}
+.details-list > div {
+  padding: 8px 0;
+  border-bottom: 1px solid #1d303d;
+}
+.details-list label {
+  display: block;
+  color: #708594;
+  font-size: 10px;
+  margin-bottom: 4px;
+}
+.details-list b {
+  font-size: 11px;
+  font-weight: 500;
+}
+.tab-placeholder {
+  display: grid;
+  place-items: center;
+  text-align: center;
+  padding: 100px 40px;
+  color: #708796;
+}
+.tab-placeholder h3 {
+  color: #dbe7ed;
+  font: 600 17px var(--display);
+  margin: 14px 0 5px;
+}
+.tab-placeholder p {
+  max-width: 350px;
+  margin: 0 0 18px;
+  line-height: 1.6;
+}
