@@ -82,19 +82,6 @@ const navGroups = [
       ["Alerts", Bell],
       ["Workflow", GitBranch],
       ["Approvals", CheckCircle2],
-      ["Dashboards", LayoutDashboard],
-      ["Hunt", Crosshair],
-      ["Cases", BriefcaseIcon],
-      ["Detections", FileSearch],
-      ["Flows", ListFilter],
-    ],
-  },
-  {
-    label: "Platform",
-    items: [
-      ["Grid", Network],
-      ["Downloads", Download],
-      ["Administration", Wrench],
     ],
   },
 ];
@@ -105,10 +92,12 @@ function BriefcaseIcon(props) {
 function App() {
   const [active, setActive] = useState("Overview");
   const [collapsed, setCollapsed] = useState(false);
-  const [alerts, setAlerts] = useState(baseAlerts);
-  const [replay, setReplay] = useState(true);
+  const [alerts, setAlerts] = useState([]);
+  const [scan, setScan] = useState(null);
+  const [replay, setReplay] = useState(false);
   const [time, setTime] = useState(new Date());
   const [toast, setToast] = useState(null);
+  const scanIsActive = ["uploading", "queued", "processing"].includes(scan?.status);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -157,8 +146,22 @@ function App() {
           <strong>{active.toUpperCase()}</strong>
         </div>
         <div className="top-actions">
+          {scanIsActive && (
+            <button
+              className="scan-status-button"
+              onClick={() => setActive("Overview")}
+              title="View active traffic scan"
+            >
+              <span className="pulse-dot" />
+              <span>
+                {scan.stage === "agents"
+                  ? `TRIAGE ${scan.agent_processed || 0}/${scan.agent_total || 0}`
+                  : `SCAN ${scan.progress || 0}%`}
+              </span>
+            </button>
+          )}
           <div className="sample-badge">
-            <span className="pulse-dot" /> SAMPLE DATA
+            <span className="pulse-dot" /> CHECKPOINT MODE
           </div>
           <button className="replay-control" onClick={() => setReplay(!replay)}>
             {replay ? <Pause size={13} /> : <Play size={13} />}{" "}
@@ -199,21 +202,6 @@ function App() {
               ))}
             </div>
           ))}
-          <div className="nav-group tools">
-            <span className="nav-label">Tools</span>
-            {[
-              "Grafana / Metrics",
-              "Agent Fleet",
-              "Asset Inventory",
-              "Replay Stats",
-              "ATT&CK Navigator",
-            ].map((name) => (
-              <a className="nav-item" href="#" key={name}>
-                <ExternalLink size={15} />
-                <span>{name}</span>
-              </a>
-            ))}
-          </div>
         </div>
         <div className="sidebar-foot">
           <div className="system-status">
@@ -232,6 +220,9 @@ function App() {
           notify={notify}
           time={time}
           setActive={setActive}
+          setAlerts={setAlerts}
+          scan={scan}
+          setScan={setScan}
         />
       </main>
       <footer className="footer">
@@ -255,7 +246,18 @@ function App() {
   );
 }
 
-function Page({ active, alerts, replay, setReplay, notify, time, setActive }) {
+function Page({
+  active,
+  alerts,
+  replay,
+  setReplay,
+  notify,
+  time,
+  setActive,
+  setAlerts,
+  scan,
+  setScan,
+}) {
   if (active === "Hunt") return <HuntPage notify={notify} />;
   if (active === "Cases") return <CasesPage notify={notify} />;
   if (active === "Flows") return <FlowsPage />;
@@ -277,6 +279,10 @@ function Page({ active, alerts, replay, setReplay, notify, time, setActive }) {
       setReplay={setReplay}
       time={time}
       setActive={setActive}
+      setAlerts={setAlerts}
+      notify={notify}
+      scan={scan}
+      setScan={setScan}
     />
   );
 }

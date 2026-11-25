@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -49,6 +49,7 @@ import {
 } from "lucide-react";
 import { incidents, workflow } from "../data/mockData";
 import { MiniChart, PanelTitle, SectionHeader, Status } from "../components/ui";
+import { nidsApi } from "../api/provider";
 
 function AlertsPage({ alerts, notify, setActive }) {
   const [query, setQuery] = useState("");
@@ -187,6 +188,47 @@ function AlertsPage({ alerts, notify, setActive }) {
 }
 
 function WorkflowPage() {
+  const [trace, setTrace] = useState(workflow);
+  const [incidentId, setIncidentId] = useState("#1042");
+  const [selectedStep, setSelectedStep] = useState(6);
+  const [replaying, setReplaying] = useState(false);
+
+  useEffect(() => {
+    if (!replaying) return undefined;
+    const timer = setInterval(() => {
+      setSelectedStep((current) => {
+        if (current >= trace.length) {
+          setReplaying(false);
+          return trace.length;
+        }
+        return current + 1;
+      });
+    }, 700);
+    return () => clearInterval(timer);
+  }, [replaying, trace.length]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const data = await nidsApi.workflow(incidentId);
+        if (!cancelled && Array.isArray(data.trace)) {
+          setTrace(data.trace.map((item) => [
+            item.name,
+            item.status,
+            String(item.step).padStart(2, "0"),
+          ]));
+        }
+      } catch {
+        // Mock data remains available when the API is offline.
+      }
+    };
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [incidentId]);
+
   return (
     <div className="page workflow-page">
       <SectionHeader
@@ -194,12 +236,25 @@ function WorkflowPage() {
         title="Agent workflow"
         action={
           <div className="header-actions">
-            <select className="select">
-              <option>Incident #1042 · PortScan</option>
-              <option>Incident #1041 · DoS Hulk</option>
+            <select className="select" value={incidentId} onChange={(event) => {
+              setIncidentId(event.target.value);
+              setSelectedStep(6);
+            }}>
+              <option value="#1042">Incident #1042 · PortScan</option>
             </select>
-            <button className="button primary">
-              <Play size={14} /> Replay trace
+            <button
+              className="button primary"
+              onClick={() => {
+                if (replaying) {
+                  setReplaying(false);
+                } else {
+                  setSelectedStep(1);
+                  setReplaying(true);
+                }
+              }}
+            >
+              {replaying ? <Pause size={14} /> : <Play size={14} />}
+              {replaying ? "Replay running" : "Replay trace"}
             </button>
           </div>
         }
@@ -208,7 +263,7 @@ function WorkflowPage() {
         <section className="panel workflow-canvas">
           <div className="workflow-toolbar">
             <span>
-              <span className="pulse-dot" /> live trace · incident #1042
+              <span className="pulse-dot" /> live trace · incident {incidentId}
             </span>
             <div>
               <button className="icon-button small">−</button>
@@ -219,9 +274,14 @@ function WorkflowPage() {
             </div>
           </div>
           <div className="flow-grid">
-            {workflow.map(([name, status, step], i) => (
-              <React.Fragment key={step}>
-                <div className={`flow-node ${status}`}>
+            {trace.map(([name, status, step], i) => (
+              <Fragment key={step}>
+                <button
+                  type="button"
+                  className={`flow-node ${status} ${Number(step) === selectedStep ? "selected" : ""}`}
+                  onClick={() => setSelectedStep(Number(step))}
+                  aria-label={`Open step ${step}: ${name}`}
+                >
                   <span className="node-step">{step}</span>
                   <div>
                     <b>{name}</b>
@@ -231,20 +291,13 @@ function WorkflowPage() {
                         : status === "waiting"
                           ? "awaiting signal"
                           : status === "success"
-                            ? `${i + 1}.2s · complete`
+                            ? `${(i + 1) * 0.7}s · complete`
                             : "queued"}
                     </small>
                   </div>
                   <i />
-                </div>
-                {i < workflow.length - 1 && (
-                  <div
-                    className={`flow-connector ${i === 3 || i === 12 ? "decision" : ""}`}
-                  >
-                    <span />
-                  </div>
-                )}
-              </React.Fragment>
+                </button>
+              </Fragment>
             ))}
           </div>
           <div className="workflow-legend">
@@ -266,37 +319,56 @@ function WorkflowPage() {
           </div>
         </section>
         <aside className="trace-panel">
+          {(() => {
+            const selected = trace[Math.min(Math.max(selectedStep - 1, 0), trace.length - 1)] || workflow[5];
+            const [selectedName, selectedStatus, selectedStepNumber] = selected;
+            return (
+              <>
           <PanelTitle
             icon={TerminalSquare}
             title="Agent trace"
-            meta="step 06 / 15"
+            meta={`step ${selectedStepNumber} / ${trace.length}`}
           />
           <div className="trace-agent">
             <div className="agent-icon blue">
               <Sparkles size={16} />
             </div>
             <div>
-              <b>Reasoning Agent</b>
-              <span>running · claude mock</span>
+              <b>{selectedName}</b>
+              <span>{selectedStatus} · local/mock trace</span>
             </div>
-            <span className="trace-time">1.8s</span>
+            <span className="trace-time">{(Number(selectedStepNumber) * 0.7).toFixed(1)}s</span>
           </div>
           <div className="trace-section">
             <label>INPUT</label>
-            <pre>{`{\n  "attack": "PortScan",\n  "src_ip": "172.16.0.1",\n  "asset": "web-server-01"\n}`}</pre>
+            <pre>{JSON.stringify({
+              incident: incidentId,
+              step: selectedStepNumber,
+              name: selectedName,
+            }, null, 2)}</pre>
           </div>
           <div className="trace-section">
             <label>OUTPUT</label>
-            <pre>{`{\n  "intent": "network mapping",\n  "confidence": 0.94,\n  "stage": "reconnaissance"\n}`}</pre>
+            <pre>{JSON.stringify({
+              status: selectedStatus,
+              result: selectedStatus === "pending"
+                ? "queued"
+                : selectedStatus === "waiting"
+                  ? "awaiting human signal"
+                  : "completed",
+            }, null, 2)}</pre>
           </div>
           <div className="trace-footer">
             <span>
-              prompt tokens <b>842</b>
+              trace step <b>{selectedStepNumber}</b>
             </span>
             <span>
-              latency <b>1,842 ms</b>
+              latency <b>{Number(selectedStepNumber) * 70} ms</b>
             </span>
           </div>
+              </>
+            );
+          })()}
         </aside>
       </div>
     </div>
@@ -304,6 +376,47 @@ function WorkflowPage() {
 }
 
 function ApprovalsPage({ notify }) {
+  const [comment, setComment] = useState("");
+  const [replanPrompt, setReplanPrompt] = useState("");
+  const [showReplan, setShowReplan] = useState(false);
+  const decide = async (verdict) => {
+    try {
+      await nidsApi.decide("#1042", {
+        verdict,
+        approved_actions: verdict === "reject"
+          ? []
+          : [
+              { action: "block_ip", target: "172.16.0.1" },
+              { action: "rate_limit", target: "192.168.10.50" },
+            ],
+        note: comment,
+      });
+      notify(
+        verdict === "reject"
+          ? "Approval rejected and returned to planning"
+          : verdict === "modify"
+            ? "Plan modified and approved"
+            : "Plan approved · simulation execution started",
+      );
+    } catch (error) {
+      notify(error.message);
+    }
+  };
+  const replan = async () => {
+    if (!replanPrompt.trim()) {
+      notify("Enter a prompt describing how the plan should change");
+      return;
+    }
+    try {
+      await nidsApi.replan("#1042", replanPrompt);
+      notify("Response plan revised · waiting for approval");
+      setShowReplan(false);
+      setReplanPrompt("");
+    } catch (error) {
+      notify(error.message);
+    }
+  };
+
   return (
     <div className="page">
       <SectionHeader
@@ -415,27 +528,52 @@ function ApprovalsPage({ notify }) {
           <textarea
             className="comment-box"
             placeholder="Add an analyst comment (optional)…"
+            value={comment}
+            onChange={(event) => setComment(event.target.value)}
           />
+          {showReplan && (
+            <div className="replan-box">
+              <label>Ask the planning agent to revise this plan</label>
+              <textarea
+                className="comment-box"
+                placeholder="Example: Make it less disruptive and use rate limiting instead of blocking..."
+                value={replanPrompt}
+                onChange={(event) => setReplanPrompt(event.target.value)}
+              />
+              <div className="review-actions">
+                <button className="button secondary" onClick={() => setShowReplan(false)}>
+                  Cancel
+                </button>
+                <button className="button warning" onClick={replan}>
+                  <RefreshCw size={14} /> Replan
+                </button>
+              </div>
+            </div>
+          )}
           <div className="review-actions">
+            {!showReplan && (
+              <button
+                className="button secondary"
+                onClick={() => setShowReplan(true)}
+              >
+                <RefreshCw size={14} /> Replan
+              </button>
+            )}
             <button
               className="button danger"
-              onClick={() =>
-                notify("Approval rejected and returned to planning")
-              }
+              onClick={() => decide("reject")}
             >
               Reject
             </button>
             <button
               className="button warning"
-              onClick={() => notify("Plan modified and approved")}
+              onClick={() => decide("modify")}
             >
               Modify & approve
             </button>
             <button
               className="button success"
-              onClick={() =>
-                notify("Plan approved · simulation execution started")
-              }
+              onClick={() => decide("approve")}
             >
               Approve plan <Check size={15} />
             </button>
