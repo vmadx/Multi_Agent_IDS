@@ -286,6 +286,9 @@
 .scan-progress > .scan-error {
   color: #ff8e86;
 }
+.scan-progress > .scan-warning {
+  color: #f0c879;
+}
 .model-metrics {
   margin-bottom: 14px;
   padding-bottom: 14px;

@@ -145,6 +145,24 @@ a {
   align-items: center;
   gap: 7px;
 }
+.scan-status-button {
+  border: 1px solid #264853;
+  border-radius: 4px;
+  background: #10232b;
+  color: #7de0ce;
+  min-height: 29px;
+  padding: 0 9px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+.scan-status-button:hover {
+  background: #16343c;
+  border-color: #347b80;
+}
 .pulse-dot {
   width: 7px;
   height: 7px;
@@ -321,6 +339,10 @@ a {
 .status-dot.green {
   background: var(--green);
   box-shadow: 0 0 7px #3fb95099;
+}
+.status-dot.amber {
+  background: var(--yellow);
+  box-shadow: 0 0 7px #d2992299;
 }
 .version {
   color: #516677;
