@@ -47,18 +47,71 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { incidents, workflow } from "../data/mockData";
 import { MiniChart, PanelTitle, SectionHeader, Status } from "../components/ui";
 import { nidsApi } from "../api/provider";
+import {
+  formatDetectionLabel,
+  formatDetectionLabelText,
+} from "../utils/detectionLabels";
 
-function AlertsPage({ alerts, notify, setActive }) {
+function AlertsPage({
+  alerts,
+  summary,
+  setActive,
+  setSelectedIncidentId,
+  refreshDashboard,
+}) {
   const [query, setQuery] = useState("");
-  const filtered = alerts.filter(
-    (a) =>
-      a.label.toLowerCase().includes(query.toLowerCase()) ||
-      a.src.includes(query) ||
-      a.id.toLowerCase().includes(query.toLowerCase()),
-  );
+  const [searchResults, setSearchResults] = useState(null);
+  const [searchError, setSearchError] = useState("");
+  const [searching, setSearching] = useState(false);
+  useEffect(() => {
+    const search = query.trim();
+    if (!search) {
+      setSearchResults(null);
+      setSearchError("");
+      setSearching(false);
+      return undefined;
+    }
+    let cancelled = false;
+    setSearching(false);
+    const timer = setTimeout(async () => {
+      setSearching(true);
+      setSearchError("");
+      try {
+        const results = await nidsApi.alerts({ search, limit: 50 });
+        if (!cancelled) setSearchResults(results);
+      } catch (error) {
+        if (!cancelled) {
+          setSearchResults([]);
+          setSearchError(error.message);
+        }
+      } finally {
+        if (!cancelled) setSearching(false);
+      }
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [alerts, query]);
+  const filtered = searchResults ?? alerts;
+  const priorityCounts = summary?.priority_counts || {};
+  const exportCsv = () => {
+    const columns = ["time", "sev", "label", "src", "dst", "score", "conf", "incident", "status"];
+    const csv = [
+      columns.join(","),
+      ...filtered.map((alert) => columns.map((column) =>
+        `"${String(alert[column] ?? "").replace(/^[\t\r ]*[=+@-]/, "'$&").replaceAll('"', '""')}"`,
+      ).join(",")),
+    ].join("\r\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "nids-alerts.csv";
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  };
   return (
     <div className="page">
       <SectionHeader
@@ -66,38 +119,38 @@ function AlertsPage({ alerts, notify, setActive }) {
         title="Alert queue"
         action={
           <div className="header-actions">
-            <button className="button secondary">
+            <button className="button secondary" onClick={exportCsv}>
               <Download size={14} /> Export CSV
             </button>
             <button
-              className="button primary"
-              onClick={() => notify("New alert stream pinned to workspace")}
+              className="button secondary"
+              onClick={refreshDashboard}
             >
-              <Plus size={15} /> Create rule
+              <RefreshCw size={14} /> Refresh
             </button>
           </div>
         }
       />
       <div className="alert-summary">
         <div>
-          <strong>1,248</strong>
+          <strong>{(summary?.alert_groups ?? alerts.length).toLocaleString()}</strong>
           <span>Total alerts</span>
         </div>
         <div>
-          <strong className="text-critical">18</strong>
+          <strong className="text-critical">{(priorityCounts.P1 || 0).toLocaleString()}</strong>
           <span>Critical</span>
         </div>
         <div>
-          <strong className="text-high">94</strong>
+          <strong className="text-high">{(priorityCounts.P2 || 0).toLocaleString()}</strong>
           <span>High</span>
         </div>
         <div>
-          <strong className="text-medium">312</strong>
+          <strong className="text-medium">{(priorityCounts.P3 || 0).toLocaleString()}</strong>
           <span>Medium</span>
         </div>
         <div>
-          <strong>824</strong>
-          <span>Unreviewed</span>
+          <strong>{(summary?.open_incidents || 0).toLocaleString()}</strong>
+          <span>Pending approval</span>
         </div>
       </div>
       <section className="panel table-panel">
@@ -110,19 +163,11 @@ function AlertsPage({ alerts, notify, setActive }) {
               onChange={(e) => setQuery(e.target.value)}
             />
           </div>
-          <button className="filter-button">
-            <ListFilter size={15} /> Filters <span>3</span>
-          </button>
-          <button className="filter-button">
-            Last 24 hours <ChevronDown size={14} />
-          </button>
-          <label className="switch-label">
-            <span className="switch on">
-              <i />
-            </span>{" "}
-            Auto-refresh
-          </label>
+          <span className="muted">
+            {searching ? "Searching saved alerts…" : "Auto-refreshes every 15 seconds"}
+          </span>
         </div>
+        {searchError && <p className="error-banner">{searchError}</p>}
         <div className="table-wrap">
           <table>
             <thead>
@@ -134,8 +179,12 @@ function AlertsPage({ alerts, notify, setActive }) {
                 <th>SEVERITY</th>
                 <th>LABEL</th>
                 <th>SOURCE → DESTINATION</th>
-                <th>SCORE</th>
-                <th>CONFIDENCE</th>
+                <th title="Rule-based 0–100 incident risk, not the model's class probability.">
+                  RISK SCORE
+                </th>
+                <th title="The model's confidence in its predicted attack class.">
+                  CONFIDENCE
+                </th>
                 <th>INCIDENT</th>
                 <th>STATUS</th>
                 <th />
@@ -143,7 +192,21 @@ function AlertsPage({ alerts, notify, setActive }) {
             </thead>
             <tbody>
               {filtered.map((alert) => (
-                <tr key={alert.id} onClick={() => setActive("Workflow")}>
+                <tr
+                  key={alert.id}
+                  className="clickable-row"
+                  tabIndex={0}
+                  onClick={() => {
+                    if (alert.incident) setSelectedIncidentId(alert.incident);
+                    setActive("Workflow");
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      if (alert.incident) setSelectedIncidentId(alert.incident);
+                      setActive("Workflow");
+                    }
+                  }}
+                >
                   <td>
                     <input
                       type="checkbox"
@@ -155,7 +218,7 @@ function AlertsPage({ alerts, notify, setActive }) {
                     <span className={`severity ${alert.sev}`}>{alert.sev}</span>
                   </td>
                   <td>
-                    <strong>{alert.label}</strong>
+                    <strong title={alert.label}>{formatDetectionLabel(alert.label)}</strong>
                     <small className="row-id">{alert.id}</small>
                   </td>
                   <td className="route">
@@ -179,6 +242,13 @@ function AlertsPage({ alerts, notify, setActive }) {
                   </td>
                 </tr>
               ))}
+              {filtered.length === 0 && (
+                <tr>
+                  <td colSpan="10" className="empty-cell">
+                    {alerts.length ? "No alerts match this search." : "No alerts have been stored yet."}
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
@@ -187,11 +257,24 @@ function AlertsPage({ alerts, notify, setActive }) {
   );
 }
 
-function WorkflowPage() {
-  const [trace, setTrace] = useState(workflow);
-  const [incidentId, setIncidentId] = useState("#1042");
-  const [selectedStep, setSelectedStep] = useState(6);
+function WorkflowPage({ incidents, selectedIncidentId, setSelectedIncidentId }) {
+  const [trace, setTrace] = useState([]);
+  const [incidentId, setIncidentId] = useState(selectedIncidentId || "");
+  const [selectedStep, setSelectedStep] = useState(1);
   const [replaying, setReplaying] = useState(false);
+  const [traceError, setTraceError] = useState("");
+  const [traceLoading, setTraceLoading] = useState(false);
+
+  useEffect(() => {
+    if (selectedIncidentId && selectedIncidentId !== incidentId) {
+      setIncidentId(selectedIncidentId);
+      setSelectedStep(1);
+    } else if (!incidentId && incidents.length) {
+      const nextId = incidents[0].no;
+      setIncidentId(nextId);
+      setSelectedIncidentId(nextId);
+    }
+  }, [incidentId, incidents, selectedIncidentId, setSelectedIncidentId]);
 
   useEffect(() => {
     if (!replaying) return undefined;
@@ -210,17 +293,32 @@ function WorkflowPage() {
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
+      if (!incidentId) {
+        setTrace([]);
+        setTraceError("");
+        setTraceLoading(false);
+        return;
+      }
+      setTraceLoading(true);
+      setTraceError("");
       try {
         const data = await nidsApi.workflow(incidentId);
         if (!cancelled && Array.isArray(data.trace)) {
-          setTrace(data.trace.map((item) => [
-            item.name,
-            item.status,
-            String(item.step).padStart(2, "0"),
-          ]));
+          setTrace(data.trace.map((item) => ({
+            ...item,
+            step: String(item.step).padStart(2, "0"),
+          })));
+        } else if (!cancelled) {
+          setTrace([]);
+          setTraceError("The server returned no workflow trace for this incident.");
         }
-      } catch {
-        // Mock data remains available when the API is offline.
+      } catch (error) {
+        if (!cancelled) {
+          setTrace([]);
+          setTraceError(error.message);
+        }
+      } finally {
+        if (!cancelled) setTraceLoading(false);
       }
     };
     load();
@@ -236,11 +334,22 @@ function WorkflowPage() {
         title="Agent workflow"
         action={
           <div className="header-actions">
-            <select className="select" value={incidentId} onChange={(event) => {
-              setIncidentId(event.target.value);
-              setSelectedStep(6);
-            }}>
-              <option value="#1042">Incident #1042 · PortScan</option>
+            <select
+              className="select"
+              value={incidentId}
+              onChange={(event) => {
+                setIncidentId(event.target.value);
+                setSelectedIncidentId(event.target.value);
+                setSelectedStep(1);
+              }}
+              disabled={!incidents.length}
+            >
+              {!incidents.length && <option value="">No incidents available</option>}
+              {incidents.map((incident) => (
+                <option key={incident.no} value={incident.no}>
+                  {incident.no} · {formatDetectionLabel(incident.type)}
+                </option>
+              ))}
             </select>
             <button
               className="button primary"
@@ -263,42 +372,42 @@ function WorkflowPage() {
         <section className="panel workflow-canvas">
           <div className="workflow-toolbar">
             <span>
-              <span className="pulse-dot" /> live trace · incident {incidentId}
+              <span className={`pulse-dot ${traceLoading ? "" : "muted"}`} />
+              {traceLoading ? "loading trace" : `stored trace · incident ${incidentId || "—"}`}
             </span>
-            <div>
-              <button className="icon-button small">−</button>
-              <button className="icon-button small">+</button>
-              <button className="icon-button small">
-                <Crosshair size={14} />
-              </button>
-            </div>
           </div>
           <div className="flow-grid">
-            {trace.map(([name, status, step], i) => (
-              <Fragment key={step}>
+            {trace.map((item, i) => (
+              <Fragment key={item.step}>
                 <button
                   type="button"
-                  className={`flow-node ${status} ${Number(step) === selectedStep ? "selected" : ""}`}
-                  onClick={() => setSelectedStep(Number(step))}
-                  aria-label={`Open step ${step}: ${name}`}
+                  className={`flow-node ${item.status} ${Number(item.step) === selectedStep ? "selected" : ""}`}
+                  onClick={() => setSelectedStep(Number(item.step))}
+                  aria-label={`Open step ${item.step}: ${item.name}`}
                 >
-                  <span className="node-step">{step}</span>
+                  <span className="node-step">{item.step}</span>
                   <div>
-                    <b>{name}</b>
+                    <b>{item.name}</b>
                     <small>
-                      {status === "running"
+                      {item.status === "running"
                         ? "processing now"
-                        : status === "waiting"
+                        : item.status === "waiting"
                           ? "awaiting signal"
-                          : status === "success"
-                            ? `${(i + 1) * 0.7}s · complete`
-                            : "queued"}
+                          : item.status === "success"
+                            ? `${((item.latency_ms || 0) / 1000).toFixed(2)}s · complete`
+                            : item.status}
                     </small>
                   </div>
                   <i />
                 </button>
               </Fragment>
             ))}
+            {!traceLoading && traceError && (
+              <p className="workflow-empty">{traceError}</p>
+            )}
+            {!traceLoading && !traceError && !trace.length && (
+              <p className="workflow-empty">This incident has no stored workflow trace.</p>
+            )}
           </div>
           <div className="workflow-legend">
             <span>
@@ -320,50 +429,47 @@ function WorkflowPage() {
         </section>
         <aside className="trace-panel">
           {(() => {
-            const selected = trace[Math.min(Math.max(selectedStep - 1, 0), trace.length - 1)] || workflow[5];
-            const [selectedName, selectedStatus, selectedStepNumber] = selected;
+            const selected = trace.find((item) => Number(item.step) === selectedStep);
+            if (!selected) {
+              return <p className="workflow-empty">Select an available trace step to inspect its data.</p>;
+            }
             return (
               <>
           <PanelTitle
             icon={TerminalSquare}
             title="Agent trace"
-            meta={`step ${selectedStepNumber} / ${trace.length}`}
+            meta={`step ${selected.step} / ${trace.length}`}
           />
           <div className="trace-agent">
             <div className="agent-icon blue">
               <Sparkles size={16} />
             </div>
             <div>
-              <b>{selectedName}</b>
-              <span>{selectedStatus} · local/mock trace</span>
+              <b>{selected.name}</b>
+              <span>{selected.status} · persisted trace</span>
             </div>
-            <span className="trace-time">{(Number(selectedStepNumber) * 0.7).toFixed(1)}s</span>
+            <span className="trace-time">
+              {((selected.latency_ms || 0) / 1000).toFixed(2)}s
+            </span>
           </div>
           <div className="trace-section">
-            <label>INPUT</label>
+            <label>STEP</label>
             <pre>{JSON.stringify({
               incident: incidentId,
-              step: selectedStepNumber,
-              name: selectedName,
+              step: selected.step,
+              name: selected.name,
             }, null, 2)}</pre>
           </div>
           <div className="trace-section">
             <label>OUTPUT</label>
-            <pre>{JSON.stringify({
-              status: selectedStatus,
-              result: selectedStatus === "pending"
-                ? "queued"
-                : selectedStatus === "waiting"
-                  ? "awaiting human signal"
-                  : "completed",
-            }, null, 2)}</pre>
+            <pre>{JSON.stringify(selected.output || {}, null, 2)}</pre>
           </div>
           <div className="trace-footer">
             <span>
-              trace step <b>{selectedStepNumber}</b>
+              trace step <b>{selected.step}</b>
             </span>
             <span>
-              latency <b>{Number(selectedStepNumber) * 70} ms</b>
+              latency <b>{selected.latency_ms || "—"} ms</b>
             </span>
           </div>
               </>
@@ -375,45 +481,119 @@ function WorkflowPage() {
   );
 }
 
-function ApprovalsPage({ notify }) {
+function ApprovalsPage({
+  incidents,
+  selectedIncidentId,
+  notify,
+  refreshDashboard,
+}) {
+  const pendingIncidents = incidents.filter(
+    (item) => item.outcome === "pending" || item.status === "awaiting approval",
+  );
+  const [selectedId, setSelectedId] = useState(selectedIncidentId || "");
+  const [incidentDetails, setIncidentDetails] = useState(null);
+  const [selectedPlanIndexes, setSelectedPlanIndexes] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const [comment, setComment] = useState("");
   const [replanPrompt, setReplanPrompt] = useState("");
   const [showReplan, setShowReplan] = useState(false);
+  const [isReplanning, setIsReplanning] = useState(false);
+  const [replanError, setReplanError] = useState("");
+  const selectedSummary = pendingIncidents.find((item) => item.no === selectedId);
+  const plans = Array.isArray(incidentDetails?.plans) ? incidentDetails.plans : [];
+  const canReview =
+    Boolean(incidentDetails) &&
+    (incidentDetails.outcome === "pending" ||
+      incidentDetails.status === "awaiting approval");
+
+  useEffect(() => {
+    const preferred = pendingIncidents.find((item) => item.no === selectedIncidentId);
+    if (preferred) {
+      setSelectedId(preferred.no);
+    } else if (!pendingIncidents.some((item) => item.no === selectedId)) {
+      setSelectedId(pendingIncidents[0]?.no || "");
+    }
+  }, [incidents, selectedId, selectedIncidentId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!selectedId) {
+      setIncidentDetails(null);
+      setSelectedPlanIndexes([]);
+      setLoadError("");
+      setLoading(false);
+      return undefined;
+    }
+    setLoading(true);
+    setLoadError("");
+    nidsApi.incident(selectedId)
+      .then((detail) => {
+        if (cancelled) return;
+        setIncidentDetails(detail);
+        setSelectedPlanIndexes(
+          (Array.isArray(detail.plans) ? detail.plans : []).map((_, index) => index),
+        );
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setIncidentDetails(null);
+        setLoadError(error.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedId]);
+
   const decide = async (verdict) => {
+    if (!selectedId || !canReview) return;
     try {
-      await nidsApi.decide("#1042", {
+      const updated = await nidsApi.decide(selectedId, {
         verdict,
         approved_actions: verdict === "reject"
           ? []
-          : [
-              { action: "block_ip", target: "172.16.0.1" },
-              { action: "rate_limit", target: "192.168.10.50" },
-            ],
+          : selectedPlanIndexes.map((index) => plans[index]),
         note: comment,
       });
+      setIncidentDetails(updated);
       notify(
         verdict === "reject"
           ? "Approval rejected and returned to planning"
           : verdict === "modify"
-            ? "Plan modified and approved"
-            : "Plan approved · simulation execution started",
+            ? "Selected response plan approved"
+            : "Response plan approved",
       );
+      await refreshDashboard();
     } catch (error) {
       notify(error.message);
     }
   };
   const replan = async () => {
-    if (!replanPrompt.trim()) {
+    if (isReplanning) return;
+    if (!selectedId || !canReview || !replanPrompt.trim()) {
       notify("Enter a prompt describing how the plan should change");
       return;
     }
+    setIsReplanning(true);
+    setReplanError("");
     try {
-      await nidsApi.replan("#1042", replanPrompt);
-      notify("Response plan revised · waiting for approval");
+      const updated = await nidsApi.replan(selectedId, replanPrompt);
+      setIncidentDetails(updated);
+      setSelectedPlanIndexes(
+        (Array.isArray(updated.plans) ? updated.plans : []).map((_, index) => index),
+      );
+      notify("Plan revised · back in approval queue; execution waits for approval");
       setShowReplan(false);
       setReplanPrompt("");
+      await refreshDashboard();
     } catch (error) {
+      setReplanError(error.message);
       notify(error.message);
+    } finally {
+      setIsReplanning(false);
     }
   };
 
@@ -424,7 +604,7 @@ function ApprovalsPage({ notify }) {
         title="Approval queue"
         action={
           <div className="live-indicator">
-            <span className="pulse-dot" /> 5 pending decisions
+            <span className="pulse-dot" /> {pendingIncidents.length} pending decisions
           </div>
         }
       />
@@ -435,34 +615,63 @@ function ApprovalsPage({ notify }) {
             title="Pending approvals"
             meta="oldest first"
           />
-          {incidents.slice(0, 4).map((item, index) => (
+          {pendingIncidents.map((item) => (
             <div
-              className={`approval-item ${index === 0 ? "selected" : ""}`}
+              className={`approval-item ${item.no === selectedId ? "selected" : ""}`}
               key={item.no}
+              role="button"
+              tabIndex={0}
+              onClick={() => setSelectedId(item.no)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") setSelectedId(item.no);
+              }}
             >
               <div className={`priority ${item.priority.toLowerCase()}`}>
                 {item.priority}
               </div>
               <div className="approval-copy">
                 <b>
-                  {item.no} · {item.title}
+                  {item.no} · {formatDetectionLabelText(item.title, item.type)}
                 </b>
-                <span>{item.type} · recommended containment plan</span>
+                <span>
+                  {formatDetectionLabel(item.type)} · recommended containment plan
+                </span>
                 <small>
-                  {item.time} <span>·</span> waiting for analyst
+                  {item.time || "time unavailable"} <span>·</span> waiting for analyst
                 </small>
               </div>
               <ChevronDown size={15} />
             </div>
           ))}
+          {!pendingIncidents.length && (
+            <p className="empty-cell">No incidents are awaiting approval.</p>
+          )}
         </section>
         <section className="panel review-panel">
+          {loading && <p className="muted">Loading incident details…</p>}
+          {loadError && <p className="error-banner">{loadError}</p>}
+          {!loading && !loadError && !incidentDetails && (
+            <p className="empty-cell">Select an incident to review its stored response plan.</p>
+          )}
+          {incidentDetails && (
+          <>
           <div className="review-header">
             <div>
-              <div className="eyebrow">REVIEW REQUEST · #1042</div>
-              <h2>Reconnaissance against public web edge</h2>
+              <div className="eyebrow">REVIEW REQUEST · {selectedId}</div>
+              <h2>
+                {formatDetectionLabelText(
+                  incidentDetails.diagnosis?.summary,
+                  incidentDetails.alert?.detection_label,
+                ) ||
+                  selectedSummary?.title ||
+                  formatDetectionLabel(incidentDetails.alert?.detection_label
+                    || selectedSummary?.type
+                    || "Incident details")}
+              </h2>
             </div>
-            <span className="status awaiting">awaiting approval</span>
+            <span className="status awaiting">
+              {incidentDetails.status || selectedSummary?.status || "unknown"}
+            </span>
           </div>
           <div className="approval-banner">
             <Shield size={17} />
@@ -475,53 +684,69 @@ function ApprovalsPage({ notify }) {
             <div>
               <label>RISK SCORE</label>
               <div className="risk-score">
-                <strong>92</strong>
+                <strong>
+                  {incidentDetails.triage?.risk_score ?? selectedSummary?.risk ?? "—"}
+                </strong>
                 <span>/ 100</span>
-                <i>Critical</i>
+                <i>{incidentDetails.triage?.priority || selectedSummary?.priority || "Unknown"}</i>
               </div>
             </div>
             <div>
               <label>ATTACK TYPE</label>
-              <b className="review-value">PortScan</b>
-              <span className="review-sub">
-                MITRE T1046 · Network Service Scanning
-              </span>
+              <b className="review-value">
+                {formatDetectionLabel(
+                  incidentDetails.alert?.detection_label || selectedSummary?.type,
+                )}
+              </b>
+              <span className="review-sub">Source: {incidentDetails.alert?.src_ip || "unknown"}</span>
             </div>
             <div>
               <label>AFFECTED ASSET</label>
-              <b className="review-value">web-server-01</b>
-              <span className="review-sub mono">192.168.10.50 · critical</span>
+              <b className="review-value">
+                {incidentDetails.diagnosis?.asset?.role || "Destination"}
+              </b>
+              <span className="review-sub mono">
+                {incidentDetails.alert?.dst_ip || "unknown"}
+              </span>
             </div>
           </div>
           <div className="review-block">
             <div className="block-label">
-              <span>RECOMMENDED RESPONSE</span>
-              <span className="recommended">BEST EFFECTIVENESS · 94%</span>
+              <span>STORED RESPONSE PLAN</span>
+              <span className="recommended">
+                {plans.length} recommended action{plans.length === 1 ? "" : "s"}
+              </span>
             </div>
-            <h3>Block attacker IP and rate-limit scan</h3>
+            <h3>{plans.length ? "Select actions for analyst approval" : "No response plan is stored"}</h3>
             <div className="action-checks">
-              <label>
-                <input type="checkbox" defaultChecked /> Add firewall deny rule
-                for <b className="mono">172.16.0.1</b>
-              </label>
-              <label>
-                <input type="checkbox" defaultChecked /> Apply 60 req/min rate
-                limit to external edge
-              </label>
-              <label>
-                <input type="checkbox" defaultChecked /> Monitor source for 10
-                minutes after containment
-              </label>
+              {plans.map((plan, index) => (
+                <label key={`${plan.action}-${plan.target}-${index}`}>
+                  <input
+                    type="checkbox"
+                    checked={selectedPlanIndexes.includes(index)}
+                    onChange={(event) => {
+                      setSelectedPlanIndexes((current) => event.target.checked
+                        ? [...current, index]
+                        : current.filter((value) => value !== index));
+                    }}
+                  />
+                  <b>{plan.action || "response action"}</b>
+                  {plan.target ? ` · ${plan.target}` : ""}
+                  {plan.rationale ? ` — ${plan.rationale}` : ""}
+                </label>
+              ))}
             </div>
             <div className="plan-meta">
               <span>
-                <small>EST. IMPACT</small>Low
+                <small>IMPACT</small>
+                {plans.map((plan) => plan.impact).filter(Boolean).join(", ") || "Not recorded"}
               </span>
               <span>
-                <small>EST. EFFORT</small>Low
+                <small>EFFECTIVENESS</small>
+                {plans.map((plan) => plan.effectiveness).filter((value) => value != null).join(", ") || "Not recorded"}
               </span>
               <span>
-                <small>ROLLBACK</small>Automatic
+                <small>OUTCOME</small>{incidentDetails.outcome || "unknown"}
               </span>
             </div>
           </div>
@@ -534,18 +759,30 @@ function ApprovalsPage({ notify }) {
           {showReplan && (
             <div className="replan-box">
               <label>Ask the planning agent to revise this plan</label>
+              {replanError && <p className="error-banner">{replanError}</p>}
               <textarea
                 className="comment-box"
                 placeholder="Example: Make it less disruptive and use rate limiting instead of blocking..."
                 value={replanPrompt}
                 onChange={(event) => setReplanPrompt(event.target.value)}
+                disabled={isReplanning}
               />
               <div className="review-actions">
-                <button className="button secondary" onClick={() => setShowReplan(false)}>
+                <button
+                  type="button"
+                  className="button secondary"
+                  onClick={() => setShowReplan(false)}
+                  disabled={isReplanning}
+                >
                   Cancel
                 </button>
-                <button className="button warning" onClick={replan}>
-                  <RefreshCw size={14} /> Replan
+                <button
+                  type="button"
+                  className="button warning"
+                  onClick={replan}
+                  disabled={isReplanning || !replanPrompt.trim()}
+                >
+                  <RefreshCw size={14} /> {isReplanning ? "Replanning..." : "Replan"}
                 </button>
               </div>
             </div>
@@ -562,22 +799,27 @@ function ApprovalsPage({ notify }) {
             <button
               className="button danger"
               onClick={() => decide("reject")}
+              disabled={!canReview}
             >
               Reject
             </button>
             <button
               className="button warning"
               onClick={() => decide("modify")}
+              disabled={!canReview}
             >
               Modify & approve
             </button>
             <button
               className="button success"
               onClick={() => decide("approve")}
+              disabled={!canReview}
             >
               Approve plan <Check size={15} />
             </button>
           </div>
+          </>
+          )}
         </section>
       </div>
     </div>
@@ -762,29 +1004,355 @@ function Detail({ label, value, tone }) {
   );
 }
 
+const AGENT_SESSION_STORAGE_KEY = "agentic-nids-agent-sessions";
+const AGENT_WELCOME_MESSAGE = {
+  role: "agent",
+  text: "Ask about saved scans, alert groups, incident priorities, or investigation playbooks.",
+};
+
+function renderInlineMarkdown(text, keyPrefix) {
+  const markdownPattern = /(\*\*[^*]+\*\*|`[^`]+`|\*[^*]+\*)/g;
+  return text.split(markdownPattern).map((part, index) => {
+    const key = `${keyPrefix}-${index}`;
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return <strong key={key}>{part.slice(2, -2)}</strong>;
+    }
+    if (part.startsWith("`") && part.endsWith("`")) {
+      return <code key={key}>{part.slice(1, -1)}</code>;
+    }
+    if (part.startsWith("*") && part.endsWith("*")) {
+      return <em key={key}>{part.slice(1, -1)}</em>;
+    }
+    return part;
+  });
+}
+
+function normalizeAssistantMarkdown(text) {
+  return text
+    .replace(/\$\$([\s\S]*?)\$\$/g, "$1")
+    .replace(/\$([^$\n]+)\$/g, "$1")
+    .replace(/\\text\{([^{}]*)\}/g, "$1")
+    .replace(/\\operatorname\{([^{}]*)\}/g, "$1")
+    .replace(/\\(?:mathrm|mathbf|mathit)\{([^{}]*)\}/g, "$1")
+    .replace(/\\frac\{([^{}]+)\}\{([^{}]+)\}/g, "($1 / $2)")
+    .replace(/\\sqrt\{([^{}]+)\}/g, "√($1)")
+    .replace(/\\times\b/g, " × ")
+    .replace(/\\cdot\b/g, " · ")
+    .replace(/\\geq?\b/g, " ≥ ")
+    .replace(/\\leq?\b/g, " ≤ ")
+    .replace(/\\neq\b/g, " ≠ ")
+    .replace(/\\approx\b/g, " ≈ ")
+    .replace(/\\min\b/g, "min")
+    .replace(/\\max\b/g, "max")
+    .replace(/\\left|\\right/g, "")
+    .replace(/\\(?:big|Big|bigg|Bigg)(?=[()[\]])/g, "")
+    .replace(/\\%/g, "%")
+    .replace(/\\_/g, "_")
+    .replace(/\\\\/g, " ")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\s+([),])/g, "$1")
+    .replace(/\(\s+/g, "(");
+}
+
+function renderAssistantMarkdown(text) {
+  const lines = normalizeAssistantMarkdown(text).trim().split("\n");
+  const blocks = [];
+  let lineIndex = 0;
+  while (lineIndex < lines.length) {
+    const line = lines[lineIndex].trim();
+    if (!line) {
+      lineIndex += 1;
+      continue;
+    }
+
+    const blockIndex = blocks.length;
+    const heading = /^(#{1,3})\s+(.+)$/.exec(line);
+    if (heading) {
+      const Heading = `h${heading[1].length}`;
+      blocks.push(
+        <Heading key={`heading-${blockIndex}`}>
+          {renderInlineMarkdown(heading[2], `heading-${blockIndex}`)}
+        </Heading>,
+      );
+      lineIndex += 1;
+      continue;
+    }
+
+    if (line.startsWith("```")) {
+      const codeLines = [];
+      lineIndex += 1;
+      while (lineIndex < lines.length && !lines[lineIndex].trim().startsWith("```")) {
+        codeLines.push(lines[lineIndex]);
+        lineIndex += 1;
+      }
+      if (lineIndex < lines.length) lineIndex += 1;
+      blocks.push(
+        <pre key={`code-${blockIndex}`}>
+          <code>{codeLines.join("\n")}</code>
+        </pre>,
+      );
+      continue;
+    }
+
+    if (/^\s*[-*+]\s+/.test(lines[lineIndex])) {
+      const items = [];
+      while (
+        lineIndex < lines.length
+        && /^\s*[-*+]\s+/.test(lines[lineIndex])
+      ) {
+        items.push(lines[lineIndex].replace(/^\s*[-*+]\s+/, ""));
+        lineIndex += 1;
+      }
+      blocks.push(
+        <ul key={`list-${blockIndex}`}>
+          {items.map((item, itemIndex) => (
+            <li key={`item-${itemIndex}`}>
+              {renderInlineMarkdown(item, `list-${blockIndex}-${itemIndex}`)}
+            </li>
+          ))}
+        </ul>,
+      );
+      continue;
+    }
+
+    if (/^\s*\d+[.)]\s+/.test(lines[lineIndex])) {
+      const items = [];
+      while (
+        lineIndex < lines.length
+        && /^\s*\d+[.)]\s+/.test(lines[lineIndex])
+      ) {
+        items.push(lines[lineIndex].replace(/^\s*\d+[.)]\s+/, ""));
+        lineIndex += 1;
+      }
+      blocks.push(
+        <ol key={`list-${blockIndex}`}>
+          {items.map((item, itemIndex) => (
+            <li key={`item-${itemIndex}`}>
+              {renderInlineMarkdown(item, `ordered-${blockIndex}-${itemIndex}`)}
+            </li>
+          ))}
+        </ol>,
+      );
+      continue;
+    }
+
+    const paragraphLines = [line];
+    lineIndex += 1;
+    while (
+      lineIndex < lines.length
+      && lines[lineIndex].trim()
+      && !/^#{1,3}\s+/.test(lines[lineIndex].trim())
+      && !/^\s*[-*+]\s+/.test(lines[lineIndex])
+      && !/^\s*\d+[.)]\s+/.test(lines[lineIndex])
+      && !lines[lineIndex].trim().startsWith("```")
+    ) {
+      paragraphLines.push(lines[lineIndex].trim());
+      lineIndex += 1;
+    }
+    blocks.push(
+      <p key={`paragraph-${blockIndex}`}>
+        {paragraphLines.map((paragraphLine, paragraphIndex) => (
+          <Fragment key={`line-${paragraphIndex}`}>
+            {renderInlineMarkdown(
+              paragraphLine,
+              `paragraph-${blockIndex}-${paragraphIndex}`,
+            )}
+            {paragraphIndex < paragraphLines.length - 1 && <br />}
+          </Fragment>
+        ))}
+      </p>,
+    );
+  }
+  return blocks;
+}
+
+function AssistantAnswer({ text, streaming, error }) {
+  return (
+    <div className={`assistant-answer ${error ? "chat-error" : ""}`}>
+      {renderAssistantMarkdown(text)}
+      {streaming && !text && (
+        <span className="typing-indicator" aria-label="Generating response">
+          <i /><i /><i />
+        </span>
+      )}
+      {streaming && text && <span className="streaming-cursor" aria-hidden="true" />}
+    </div>
+  );
+}
+
+function createAgentSession() {
+  return {
+    id: globalThis.crypto?.randomUUID?.()
+      || `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    title: "New session",
+    messages: [AGENT_WELCOME_MESSAGE],
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function loadAgentSessions() {
+  try {
+    const saved = window.localStorage.getItem(AGENT_SESSION_STORAGE_KEY);
+    if (saved) {
+      const sessions = JSON.parse(saved);
+      if (
+        Array.isArray(sessions)
+        && sessions.length > 0
+        && sessions.every((session) =>
+          typeof session.id === "string"
+          && typeof session.title === "string"
+          && Array.isArray(session.messages)
+          && session.messages.every((message) =>
+            message
+            && ["agent", "user"].includes(message.role)
+            && typeof message.text === "string"
+          )
+        )
+      ) {
+        return sessions;
+      }
+      console.warn("Ignoring malformed saved Agent AI sessions.");
+    }
+  } catch (error) {
+    console.warn("Could not load Agent AI sessions from local storage.", error);
+  }
+  return [createAgentSession()];
+}
+
 function AgentPage({ notify }) {
-  const [messages, setMessages] = useState([
-    {
-      role: "agent",
-      text: "Good morning, analyst. I am monitoring the replay stream and can investigate alerts, explain model decisions, or draft a response plan.",
-    },
-    { role: "user", text: "Summarise the current P1 incidents." },
-    {
-      role: "agent",
-      text: "There are 3 active P1 incidents. #1042 is awaiting approval for a simulated block of 172.16.0.1; #1041 is executing containment against an HTTP flood; #1037 has escalated after verification found the attack persists.",
-    },
-  ]);
+  const [sessions, setSessions] = useState(loadAgentSessions);
+  const [activeSessionId, setActiveSessionId] = useState(() => sessions[0].id);
+  const [sessionStorageError, setSessionStorageError] = useState("");
   const [input, setInput] = useState("");
-  const send = () => {
-    if (!input.trim()) return;
-    setMessages([
-      ...messages,
-      { role: "user", text: input },
-      {
-        role: "agent",
-        text: "I searched the live alert index and retrieved MITRE context. The strongest match is T1046 Network Service Scanning with 94% confidence. I recommend reviewing incident #1042.",
-      },
-    ]);
+  const [health, setHealth] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [assistantStatus, setAssistantStatus] = useState("thinking…");
+  const activeSession = sessions.find(
+    (session) => session.id === activeSessionId,
+  ) || sessions[0];
+  const messages = activeSession.messages;
+
+  useEffect(() => {
+    nidsApi.health().then(setHealth).catch(() => setHealth({ status: "unavailable" }));
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        AGENT_SESSION_STORAGE_KEY,
+        JSON.stringify(sessions),
+      );
+      setSessionStorageError("");
+    } catch (error) {
+      console.error("Could not save Agent AI sessions to local storage.", error);
+      setSessionStorageError("Chat sessions could not be saved in this browser.");
+    }
+  }, [sessions]);
+
+  const send = async () => {
+    const question = input.trim();
+    if (!question || loading) return;
+    const sessionId = activeSessionId;
+    const messageId = globalThis.crypto?.randomUUID?.()
+      || `message-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    setSessions((current) => current.map((session) => {
+      if (session.id !== sessionId) return session;
+      const hasPreviousQuestion = session.messages.some(
+        (message) => message.role === "user",
+      );
+      return {
+        ...session,
+        title: hasPreviousQuestion ? session.title : question.slice(0, 40),
+        messages: [
+          ...session.messages,
+          { role: "user", text: question },
+          {
+            id: messageId,
+            role: "agent",
+            text: "",
+            sources: [],
+            status: "Thinking…",
+            streaming: true,
+          },
+        ],
+        updatedAt: new Date().toISOString(),
+      };
+    }));
+    setInput("");
+    setLoading(true);
+    setAssistantStatus("thinking…");
+    const updateAgentMessage = (update) => {
+      setSessions((current) => current.map((session) => (
+        session.id === sessionId
+          ? {
+            ...session,
+            messages: session.messages.map((message) => (
+              message.id === messageId ? update(message) : message
+            )),
+            updatedAt: new Date().toISOString(),
+          }
+          : session
+      )));
+    };
+    try {
+      await nidsApi.assistantQuery(question, (event) => {
+        if (event.type === "status") {
+          const status = {
+            thinking: "Thinking…",
+            retrieving: "Searching relevant context…",
+            generating: "Writing response…",
+          }[event.status] || "Working…";
+          setAssistantStatus(status.toLowerCase());
+          updateAgentMessage((message) => ({ ...message, status }));
+        } else if (event.type === "sources") {
+          updateAgentMessage((message) => ({
+            ...message,
+            retrievalUsed: true,
+            sources: event.sources || [],
+          }));
+        } else if (event.type === "token") {
+          updateAgentMessage((message) => ({
+            ...message,
+            text: message.text + event.text,
+            status: "Writing response…",
+          }));
+        } else if (event.type === "done") {
+          updateAgentMessage((message) => ({
+            ...message,
+            streaming: false,
+            status: "",
+          }));
+        }
+      });
+    } catch (error) {
+      updateAgentMessage((message) => ({
+        ...message,
+        text: message.text || error.message || "The RAG assistant request failed.",
+        error: true,
+        failure: message.text ? error.message : "",
+        streaming: false,
+        status: "",
+      }));
+      notify?.("Agent AI could not answer. Check Supabase and Gemini configuration.");
+    } finally {
+      setLoading(false);
+      setAssistantStatus("");
+    }
+  };
+  const lastAgentMessage =
+    [...messages].reverse().find((message) => message.role === "agent") || {};
+  const lastSources = lastAgentMessage.sources || [];
+  const llmReady = health?.llm_enabled === true;
+  const ragReady = health?.rag_enabled === true;
+  const ragStatus = health === null
+    ? "Checking assistant"
+    : llmReady
+      ? ragReady ? "LLM · Supabase RAG" : "LLM ready · RAG unavailable"
+      : "LLM configuration required";
+  const startNewSession = () => {
+    const session = createAgentSession();
+    setSessions((current) => [session, ...current]);
+    setActiveSessionId(session.id);
     setInput("");
   };
   return (
@@ -794,27 +1362,45 @@ function AgentPage({ notify }) {
         title="Agent AI"
         action={
           <span className="status-tag">
-            <i className="status-dot green" /> connected · mock LLM
+            <i className={`status-dot ${llmReady ? "green" : health === null ? "muted" : "amber"}`} />
+            {ragStatus}
           </span>
         }
       />
       <div className="agent-layout">
         <aside className="panel session-list">
-          <PanelTitle icon={MessageSquare} title="Sessions" meta="3 active" />
-          <button className="new-session">
+          <PanelTitle
+            icon={MessageSquare}
+            title="Sessions"
+            meta={`${sessions.length} saved`}
+          />
+          <button className="new-session" onClick={startNewSession}>
             <Plus size={15} /> New session
           </button>
-          {[
-            "Morning triage · today",
-            "PortScan investigation · today",
-            "Model performance review · yesterday",
-          ].map((s, i) => (
-            <div className={`session ${i === 0 ? "active" : ""}`} key={s}>
-              <MessageSquare size={15} />
-              <span>{s}</span>
-              <small>{i === 0 ? "now" : `${i + 1}h`}</small>
-            </div>
-          ))}
+          {sessionStorageError && (
+            <p className="session-storage-error">{sessionStorageError}</p>
+          )}
+          <div className="session-list-items">
+            {sessions.map((session) => (
+              <button
+                type="button"
+                className={`session ${session.id === activeSession.id ? "active" : ""}`}
+                key={session.id}
+                onClick={() => {
+                  setActiveSessionId(session.id);
+                  setInput("");
+                }}
+                aria-current={session.id === activeSession.id ? "page" : undefined}
+                title={session.title}
+              >
+                <MessageSquare size={15} />
+                <span>{session.title}</span>
+                <small>
+                  {session.messages.filter((message) => message.role === "user").length}
+                </small>
+              </button>
+            ))}
+          </div>
         </aside>
         <section className="panel chat-panel">
           <div className="chat-header">
@@ -823,88 +1409,87 @@ function AgentPage({ notify }) {
               <b>Operations copilot</b>
             </div>
             <span className="status-tag">
-              <i className="status-dot green" /> streaming ready
+              <i className={`status-dot ${loading ? "amber" : llmReady ? "green" : health === null ? "muted" : "amber"}`} />
+              {loading
+                ? assistantStatus
+                : health === null
+                  ? "connecting"
+                  : llmReady
+                    ? ragReady ? "ready · RAG on" : "ready · LLM only"
+                    : "LLM setup required"}
             </span>
           </div>
           <div className="messages">
             {messages.map((m, i) => (
-              <div className={`message ${m.role}`} key={i}>
+              <div className={`message ${m.role}`} key={m.id || i}>
                 <div className="message-avatar">
                   {m.role === "agent" ? <Bot size={16} /> : "AR"}
                 </div>
                 <div>
                   <span className="message-role">
-                    {m.role === "agent" ? "Agent AI" : "analyst"} ·{" "}
-                    {i === messages.length - 1 ? "now" : "10:4" + i}
+                    {m.role === "agent" ? "Agent AI" : "analyst"}
                   </span>
-                  <p>{m.text}</p>
-                  {m.role === "agent" && i === messages.length - 1 && (
-                    <div className="tool-chips">
-                      <span>
-                        <Search size={12} /> searched alerts
-                      </span>
-                      <span>
-                        <BookOpen size={12} /> retrieved MITRE T1046
-                      </span>
-                    </div>
-                  )}
+                  {m.role === "agent" ? (
+                    <AssistantAnswer
+                      text={m.text}
+                      streaming={m.streaming}
+                      error={m.error && !m.failure}
+                    />
+                  ) : <p>{m.text}</p>}
+                  {m.failure && <p className="chat-error">{m.failure}</p>}
+                  {m.streaming && <span className="message-status">{m.status}</span>}
                 </div>
               </div>
             ))}
           </div>
           <div className="suggestions">
             <button
-              onClick={() =>
-                setInput("Show the top attackers in the last hour")
-              }
+              onClick={() => setInput("What are the top source IPs in saved alerts?")}
             >
               Top attackers
             </button>
-            <button onClick={() => setInput("Why was alert AL-8421 flagged?")}>
-              Explain AL-8421
+            <button onClick={() => setInput("Summarize incidents by priority.")}>
+              Priority summary
             </button>
-            <button
-              onClick={() => setInput("Draft response for incident #1042")}
-            >
-              Draft response
+            <button onClick={() => setInput("Explain PortScan detections and safe next steps.")}>
+              Explain PortScan
             </button>
           </div>
           <div className="chat-input">
             <input
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && send()}
+              onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && send()}
               placeholder="Ask Agent AI about your environment…"
+              disabled={loading}
             />
-            <button className="button primary" onClick={send}>
-              <ArrowUpRight size={15} /> Send
+            <button className="button primary" onClick={send} disabled={loading || !input.trim()}>
+              <ArrowUpRight size={15} /> {loading ? "Working" : "Send"}
             </button>
           </div>
         </section>
         <aside className="panel context-panel">
           <PanelTitle icon={Target} title="Context" meta="live" />
           <div className="context-card">
-            <span>SELECTED INCIDENT</span>
-            <b>#1042</b>
-            <p>Reconnaissance against public web edge</p>
-            <Status status="awaiting-approval" />
+            <span>DATA SOURCES</span>
+            <p>Saved scan summaries, grouped alerts, incident records, and security playbooks.</p>
           </div>
           <div className="context-card">
-            <span>ATTACK TAXONOMY</span>
-            <div className="tag-row">
-              <span className="tag blue">T1046</span>
-              <span className="tag">recon</span>
-              <span className="tag">P1</span>
-            </div>
-          </div>
-          <div className="context-card">
-            <span>RETRIEVED SOURCES</span>
-            <p className="source-link">
-              <BookOpen size={13} /> MITRE ATT&CK · T1046
-            </p>
-            <p className="source-link">
-              <Database size={13} /> KB-014 · Scanning playbook
-            </p>
+            <span>EVIDENCE USED</span>
+            {lastSources.length ? lastSources.map((source, index) => (
+              <p className="source-link" key={`${source.type}-${source.id}-${index}`}>
+                {source.type === "knowledge" ? <BookOpen size={13} /> : <Database size={13} />}
+                {source.type === "incident"
+                  ? formatDetectionLabel(source.label || source.id)
+                  : source.label || source.id}
+              </p>
+            )) : (
+              <p>
+                {lastAgentMessage.retrievalUsed
+                  ? "No matching evidence found."
+                  : "No retrieval needed for the latest answer."}
+              </p>
+            )}
           </div>
         </aside>
       </div>

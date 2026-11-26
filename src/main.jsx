@@ -1,62 +1,18 @@
-import React, { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
-  Activity,
-  AlertTriangle,
-  ArrowUpRight,
   Bell,
-  BookOpen,
   Bot,
-  Boxes,
-  Check,
   CheckCircle2,
   ChevronDown,
-  CircleDot,
-  Clock3,
-  Crosshair,
-  Database,
-  Download,
-  ExternalLink,
-  FileSearch,
-  Gauge,
   GitBranch,
-  Globe2,
   Home,
-  KeyRound,
-  LayoutDashboard,
-  ListFilter,
   Menu,
-  MessageSquare,
-  MoreHorizontal,
-  Network,
   PanelLeftClose,
-  Pause,
-  Play,
-  Plus,
-  Radar,
-  RefreshCw,
-  Search,
-  Settings2,
   Shield,
-  Sparkles,
-  Target,
-  TerminalSquare,
-  UserRound,
-  Users,
-  Workflow,
-  Wrench,
-  X,
-  Zap,
 } from "lucide-react";
 import "./styles/index.css";
-import { baseAlerts, incidents, workflow } from "./data/mockData";
-import {
-  KPI,
-  MiniChart,
-  PanelTitle,
-  SectionHeader,
-  Status,
-} from "./components/ui";
+import { nidsApi } from "./api/provider";
 import Overview from "./pages/Overview";
 import {
   AdministrationPage,
@@ -85,42 +41,58 @@ const navGroups = [
     ],
   },
 ];
-function BriefcaseIcon(props) {
-  return <Boxes {...props} />;
-}
 
 function App() {
   const [active, setActive] = useState("Overview");
   const [collapsed, setCollapsed] = useState(false);
   const [alerts, setAlerts] = useState([]);
+  const [incidents, setIncidents] = useState([]);
+  const [summary, setSummary] = useState(null);
+  const [health, setHealth] = useState(null);
+  const [dataError, setDataError] = useState("");
   const [scan, setScan] = useState(null);
-  const [replay, setReplay] = useState(false);
-  const [time, setTime] = useState(new Date());
+  const [selectedIncidentId, setSelectedIncidentId] = useState("");
   const [toast, setToast] = useState(null);
   const scanIsActive = ["uploading", "queued", "processing"].includes(scan?.status);
 
+  const refreshDashboard = useCallback(async () => {
+    const [healthResult, summaryResult, alertsResult, incidentsResult] =
+      await Promise.allSettled([
+        nidsApi.health(),
+        nidsApi.summary(),
+        nidsApi.alerts(),
+        nidsApi.incidents(),
+      ]);
+    const failed = [];
+    if (healthResult.status === "fulfilled") setHealth(healthResult.value);
+    else failed.push(healthResult.reason);
+    if (summaryResult.status === "fulfilled") setSummary(summaryResult.value);
+    else failed.push(summaryResult.reason);
+    if (alertsResult.status === "fulfilled") setAlerts(alertsResult.value);
+    else failed.push(alertsResult.reason);
+    if (incidentsResult.status === "fulfilled") setIncidents(incidentsResult.value);
+    else failed.push(incidentsResult.reason);
+    setDataError(failed[0]?.message || "");
+  }, []);
+
   useEffect(() => {
-    const timer = setInterval(() => {
-      setTime(new Date());
-      if (replay)
-        setAlerts((current) =>
-          [
-            {
-              ...baseAlerts[(current.length + 1) % baseAlerts.length],
-              id: `AL-${Date.now()}`,
-              time: new Date().toLocaleTimeString("en-GB"),
-              status: "new",
-            },
-            ...current,
-          ].slice(0, 8),
-        );
-    }, 5000);
+    refreshDashboard();
+    const timer = setInterval(refreshDashboard, 15000);
     return () => clearInterval(timer);
-  }, [replay]);
+  }, [refreshDashboard]);
+
   const notify = (message) => {
     setToast(message);
     setTimeout(() => setToast(null), 2800);
   };
+  const apiConnected = health?.status === "healthy";
+  const storageStatus = health === null
+    ? "CONNECTING..."
+    : health.storage_backend === "supabase"
+      ? "SUPABASE CONNECTED"
+      : apiConnected ? "LOCAL STORAGE" : "API OFFLINE";
+  const pendingCount = summary?.open_incidents || 0;
+
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -161,20 +133,16 @@ function App() {
             </button>
           )}
           <div className="sample-badge">
-            <span className="pulse-dot" /> CHECKPOINT MODE
+            <span className={`pulse-dot ${apiConnected ? "" : "muted"}`} />
+            {storageStatus}
           </div>
-          <button className="replay-control" onClick={() => setReplay(!replay)}>
-            {replay ? <Pause size={13} /> : <Play size={13} />}{" "}
-            <span>REPLAY</span>
-            <b>100×</b>
-          </button>
           <button
             className="notification-button"
-            aria-label="Notifications"
+            aria-label={`${pendingCount} pending approvals`}
             onClick={() => setActive("Approvals")}
           >
             <Bell size={17} />
-            <i>5</i>
+            {pendingCount > 0 && <i>{pendingCount > 99 ? "99+" : pendingCount}</i>}
           </button>
           <div className="user-chip">
             <div className="avatar">AR</div>
@@ -197,7 +165,9 @@ function App() {
                 >
                   <Icon size={17} />
                   <span>{label}</span>
-                  {label === "Approvals" && <em>5</em>}
+                  {label === "Approvals" && pendingCount > 0 && (
+                    <em>{pendingCount > 99 ? "99+" : pendingCount}</em>
+                  )}
                 </button>
               ))}
             </div>
@@ -205,8 +175,10 @@ function App() {
         </div>
         <div className="sidebar-foot">
           <div className="system-status">
-            <span className="status-dot green" />
-            <span>All systems nominal</span>
+            <span className={`status-dot ${apiConnected ? "green" : "muted"}`} />
+            <span>
+              {health === null ? "Checking API..." : apiConnected ? "API connected" : "API unavailable"}
+            </span>
           </div>
           <div className="version">v1.0.0 · simulation mode</div>
         </div>
@@ -215,14 +187,18 @@ function App() {
         <Page
           active={active}
           alerts={alerts}
-          replay={replay}
-          setReplay={setReplay}
           notify={notify}
-          time={time}
+          summary={summary}
+          incidents={incidents}
+          health={health}
+          dataError={dataError}
+          refreshDashboard={refreshDashboard}
           setActive={setActive}
           setAlerts={setAlerts}
           scan={scan}
           setScan={setScan}
+          selectedIncidentId={selectedIncidentId}
+          setSelectedIncidentId={setSelectedIncidentId}
         />
       </main>
       <footer className="footer">
@@ -249,14 +225,18 @@ function App() {
 function Page({
   active,
   alerts,
-  replay,
-  setReplay,
   notify,
-  time,
+  summary,
+  incidents,
+  health,
+  dataError,
+  refreshDashboard,
   setActive,
   setAlerts,
   scan,
   setScan,
+  selectedIncidentId,
+  setSelectedIncidentId,
 }) {
   if (active === "Hunt") return <HuntPage notify={notify} />;
   if (active === "Cases") return <CasesPage notify={notify} />;
@@ -266,18 +246,43 @@ function Page({
   if (active === "Administration")
     return <AdministrationPage notify={notify} />;
   if (active === "Alerts")
-    return <AlertsPage alerts={alerts} notify={notify} setActive={setActive} />;
-  if (active === "Workflow") return <WorkflowPage />;
-  if (active === "Approvals") return <ApprovalsPage notify={notify} />;
+    return (
+      <AlertsPage
+        alerts={alerts}
+        summary={summary}
+        setActive={setActive}
+        setSelectedIncidentId={setSelectedIncidentId}
+        refreshDashboard={refreshDashboard}
+      />
+    );
+  if (active === "Workflow") {
+    return (
+      <WorkflowPage
+        incidents={incidents}
+        selectedIncidentId={selectedIncidentId}
+        setSelectedIncidentId={setSelectedIncidentId}
+      />
+    );
+  }
+  if (active === "Approvals") {
+    return (
+      <ApprovalsPage
+        incidents={incidents}
+        selectedIncidentId={selectedIncidentId}
+        notify={notify}
+        refreshDashboard={refreshDashboard}
+      />
+    );
+  }
   if (active === "Detections") return <DetectionPage notify={notify} />;
-  if (active === "Agent AI") return <AgentPage notify={notify} />;
+  if (active === "Agent AI") return <AgentPage notify={notify} health={health} />;
   if (active === "Dashboards") return <DashboardPage />;
   return (
     <Overview
       alerts={alerts}
-      replay={replay}
-      setReplay={setReplay}
-      time={time}
+      summary={summary}
+      dataError={dataError}
+      refreshDashboard={refreshDashboard}
       setActive={setActive}
       setAlerts={setAlerts}
       notify={notify}

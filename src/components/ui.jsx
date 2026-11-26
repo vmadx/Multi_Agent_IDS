@@ -22,7 +22,6 @@ export function KPI({ label, value, delta, tone, icon: Icon, children }) {
       <strong>{value}</strong>
       <div className="kpi-meta">
         <span className={delta?.startsWith("+") ? "up" : ""}>{delta}</span>
-        <small>vs previous 24h</small>
       </div>
       {children}
     </div>

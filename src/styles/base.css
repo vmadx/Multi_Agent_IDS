@@ -340,6 +340,10 @@ a {
   background: var(--green);
   box-shadow: 0 0 7px #3fb95099;
 }
+.status-dot.amber {
+  background: var(--yellow);
+  box-shadow: 0 0 7px #d2992299;
+}
 .version {
   color: #516677;
   font: 10px var(--mono);
