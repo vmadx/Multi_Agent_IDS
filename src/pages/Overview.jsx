@@ -4,40 +4,39 @@ import {
   ArrowUpRight,
   Bell,
   CheckCircle2,
-  Clock3,
-  Globe2,
-  Pause,
-  Play,
   Radar,
   RefreshCw,
   Target,
   Workflow,
-  Zap,
+  Upload,
 } from "lucide-react";
 import { useRef, useState } from "react";
-import { Upload } from "lucide-react";
-import { workflow } from "../data/mockData";
 import { nidsApi } from "../api/provider";
 import {
   KPI,
-  MiniChart,
   PanelTitle,
   SectionHeader,
   Status,
 } from "../components/ui";
+import { formatDetectionLabel } from "../utils/detectionLabels";
 
 export default function Overview({
   alerts,
-  replay,
-  setReplay,
-  time,
+  summary,
+  dataError,
+  refreshDashboard,
   setActive,
   setAlerts,
   notify,
+  scan,
+  setScan,
 }) {
-  const [scan, setScan] = useState(null);
-  const metrics = scan?.metrics;
-  const priorityCounts = metrics?.priority_counts || {};
+  const recentScans = summary?.recent_scans || [];
+  const latestScan = recentScans[0];
+  const metrics = scan?.metrics || latestScan?.metrics;
+  const priorityCounts = metrics?.priority_counts
+    || summary?.priority_counts
+    || {};
 
   return (
     <div className="page">
@@ -47,79 +46,72 @@ export default function Overview({
         action={
           <div className="header-actions">
             <span className="live-indicator">
-              <span className="pulse-dot" /> LIVE REPLAY
+              <span className="pulse-dot" /> LIVE DATA · 15S REFRESH
             </span>
-            <button className="button secondary">
+            <button
+              className="button secondary"
+              onClick={refreshDashboard}
+              disabled={!refreshDashboard}
+            >
               <RefreshCw size={14} /> Refresh
             </button>
           </div>
         }
       />
+      {dataError && <p className="error-banner">{dataError}</p>}
       <UploadPanel
         setAlerts={setAlerts}
         notify={notify}
         scan={scan}
         setScan={setScan}
+        refreshDashboard={refreshDashboard}
       />
       <ScanMetrics metrics={metrics} />
       <div className="kpi-grid">
         <KPI
           label="Flows analyzed"
-          value={metrics ? metrics.rows_analyzed.toLocaleString() : "—"}
-          delta={scan?.filename || "upload a dataset"}
+          value={(metrics?.rows_analyzed ?? latestScan?.rows_scanned)?.toLocaleString() || "—"}
+          delta={scan?.filename || latestScan?.filename || "no scans stored"}
           tone="blue"
           icon={Activity}
-        >
-          <MiniChart color="#4aa3ff" />
-        </KPI>
+        />
         <KPI
           label="Threat alerts"
-          value={metrics ? metrics.threats.toLocaleString() : "—"}
-          delta="model predictions"
+          value={(metrics?.threats ?? summary?.alert_groups)?.toLocaleString() || "—"}
+          delta={metrics ? "current scan" : "saved alert groups"}
           tone="red"
           icon={AlertTriangle}
-        >
-          <div className="severity-bar">
-            <i />
-            <i />
-            <i />
-            <i />
-          </div>
-        </KPI>
+        />
         <KPI
           label="Critical incidents"
-          value={metrics ? (priorityCounts.P1 || 0).toLocaleString() : "—"}
+          value={priorityCounts.P1?.toLocaleString() || "0"}
           delta="P1"
           tone="orange"
           icon={Radar}
-        >
-          <MiniChart color="#f0883e" />
-        </KPI>
+        />
         <KPI
           label="Pending review"
-          value={metrics ? metrics.alerts_created.toLocaleString() : "—"}
+          value={summary?.open_incidents?.toLocaleString() || "0"}
           delta="human approval"
           tone="yellow"
           icon={CheckCircle2}
-        >
-          <MiniChart color="#d29922" />
-        </KPI>
+        />
       </div>
       <div className="dashboard-grid top-grid">
-        <LiveTraffic />
-        <Distribution alerts={alerts} metrics={metrics} />
+        <RecentScans scans={recentScans} />
+        <Distribution alerts={alerts} metrics={metrics} summary={summary} />
         <RankedThreats alerts={alerts} setActive={setActive} />
       </div>
       <div className="dashboard-grid bottom-grid">
         <RecentAlerts alerts={alerts} setActive={setActive} />
-        <AgentStatus scan={scan} />
-        <UploadSummaryCard scan={scan} />
+        <AgentStatus scan={scan || latestScan} />
+        <UploadSummaryCard scan={scan || latestScan} />
       </div>
     </div>
   );
 }
 
-function UploadPanel({ setAlerts, notify, scan, setScan }) {
+function UploadPanel({ setAlerts, notify, scan, setScan, refreshDashboard }) {
   const inputRef = useRef(null);
   const [dragging, setDragging] = useState(false);
   const busy = scan?.status === "uploading"
@@ -166,6 +158,7 @@ function UploadPanel({ setAlerts, notify, scan, setScan }) {
         throw new Error(status.error || "The scan failed.");
       }
       setAlerts(status.alerts || []);
+      await refreshDashboard();
       notify(
         `Scanned ${status.metrics.rows_analyzed.toLocaleString()} flows · `
         + `${status.metrics.threats.toLocaleString()} threats`,
@@ -201,7 +194,7 @@ function UploadPanel({ setAlerts, notify, scan, setScan }) {
         </div>
         <div>
           <strong>{busy ? "Processing uploaded traffic..." : "Upload network traffic"}</strong>
-          <span>CSV · LITNET-2020 1% class-balanced datasets · full-file inference</span>
+          <span>CSV · model scores every row before incident triage</span>
         </div>
         <b>{busy ? "Running" : "Choose file"}</b>
       </button>
@@ -227,7 +220,7 @@ function UploadPanel({ setAlerts, notify, scan, setScan }) {
             {scan.stage === "detection" && <span className="scan-beam" />}
           </div>
           {scan.stage === "upload" && (
-            <small>Uploading {scan.filename} to the local detection service.</small>
+            <small>Uploading {scan.filename} to the detection service.</small>
           )}
           {scan.stage === "detection" && (
             <small>
@@ -240,6 +233,9 @@ function UploadPanel({ setAlerts, notify, scan, setScan }) {
               Agent workflow: {scan.agent_processed?.toLocaleString() || 0}
               {" / "}{scan.agent_total?.toLocaleString() || 0} alert groups triaged
             </small>
+          )}
+          {scan.storage_warning && (
+            <small className="scan-warning">{scan.storage_warning}</small>
           )}
           {scan.status === "failed" && (
             <small className="scan-error">{scan.error}</small>
@@ -294,7 +290,7 @@ function ScanMetrics({ metrics }) {
               <tbody>
                 {metrics.per_class.map((row) => (
                   <tr key={row.label}>
-                    <td>{row.label}</td>
+                    <td title={row.label}>{formatDetectionLabel(row.label)}</td>
                     <td>{row.support.toLocaleString()}</td>
                     <td>{percentage(row.precision)}</td>
                     <td>{percentage(row.recall)}</td>
@@ -310,7 +306,9 @@ function ScanMetrics({ metrics }) {
                 <thead>
                   <tr>
                     <th>Actual ↓ / Predicted →</th>
-                    {matrix.labels.map((label) => <th key={label}>{label}</th>)}
+                    {matrix.labels.map((label) => (
+                      <th key={label} title={label}>{formatDetectionLabel(label)}</th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
@@ -337,79 +335,51 @@ function ScanMetrics({ metrics }) {
   );
 }
 
-function LiveTraffic() {
+function RecentScans({ scans }) {
   return (
     <section className="panel traffic-panel">
       <PanelTitle
         icon={Activity}
-        title="Live telemetry"
-        meta="rolling 5 minutes"
-        action={
-          <div className="chart-legend">
-            <span>
-              <i className="legend-line cyan" /> flows/sec
-            </span>
-            <span>
-              <i className="legend-line orange" /> alerts/sec
-            </span>
-          </div>
-        }
+        title="Recent scans"
+        meta={`${scans.length} saved`}
       />
-      <div className="hero-chart">
-        <div className="y-labels">
-          <span>120</span>
-          <span>80</span>
-          <span>40</span>
-          <span>0</span>
+      {scans.length ? (
+        <div className="mini-table">
+          {scans.map((item) => (
+            <div className="mini-row" key={item.job_id}>
+              <span className={`severity ${item.status === "complete" ? "low" : "medium"}`}>
+                {item.status}
+              </span>
+              <b>{item.filename}</b>
+              <span className="mono">{Number(item.rows_scanned || 0).toLocaleString()} flows</span>
+              <span className="muted">{item.progress || 0}%</span>
+            </div>
+          ))}
         </div>
-        <svg viewBox="0 0 640 190" preserveAspectRatio="none">
-          <defs>
-            <linearGradient id="area" x1="0" x2="0" y1="0" y2="1">
-              <stop offset="0" stopColor="#2bc7a7" stopOpacity=".3" />
-              <stop offset="1" stopColor="#2bc7a7" stopOpacity="0" />
-            </linearGradient>
-          </defs>
-          <path
-            className="gridline"
-            d="M0 20H640 M0 70H640 M0 120H640 M0 170H640"
-          />
-          <path
-            d="M0 153 C35 140 42 150 72 120 S112 141 140 98 S180 110 214 77 S250 102 282 85 S320 94 352 49 S390 92 422 62 S462 68 498 38 S548 71 580 32 S610 55 640 20 V190 H0Z"
-            fill="url(#area)"
-          />
-          <path
-            className="flow-line"
-            d="M0 153 C35 140 42 150 72 120 S112 141 140 98 S180 110 214 77 S250 102 282 85 S320 94 352 49 S390 92 422 62 S462 68 498 38 S548 71 580 32 S610 55 640 20"
-          />
-          <path
-            className="alert-line"
-            d="M0 174 C38 168 58 176 91 160 S120 170 150 153 S185 168 218 144 S250 164 287 148 S326 156 357 132 S390 159 420 125 S465 150 500 112 S544 145 576 106 S610 118 640 94"
-          />
-        </svg>
-      </div>
-      <div className="chart-footer">
-        <span>10:37</span>
-        <span>10:42</span>
-        <b>
-          <span className="pulse-dot" /> ingesting from
-          Friday-Afternoon-PortScan
-        </b>
-      </div>
+      ) : (
+        <div className="ranked-empty">No scans have been saved yet.</div>
+      )}
     </section>
   );
 }
 
-function Distribution({ alerts = [], metrics }) {
+function Distribution({ alerts = [], metrics, summary }) {
   const counts = metrics
     ? Object.fromEntries(
       metrics.prediction_distribution
         .filter((entry) => !isBenignLabel(entry.label))
         .map((entry) => [entry.label, entry.count]),
     )
-    : alerts.filter((alert) => !isBenignLabel(alert.label)).reduce((all, alert) => {
-      all[alert.label] = (all[alert.label] || 0) + 1;
-      return all;
-    }, {});
+    : summary?.detection_counts?.length
+      ? Object.fromEntries(
+        summary.detection_counts
+          .filter((entry) => !isBenignLabel(entry.label))
+          .map((entry) => [entry.label, entry.count]),
+      )
+      : alerts.filter((alert) => !isBenignLabel(alert.label)).reduce((all, alert) => {
+        all[alert.label] = (all[alert.label] || 0) + 1;
+        return all;
+      }, {});
   const rows = Object.entries(counts)
     .sort((left, right) => right[1] - left[1])
     .slice(0, 5);
@@ -470,7 +440,8 @@ function isBenignLabel(label) {
 function LegendRow({ label, value, color }) {
   return (
     <div className="legend-row">
-      <i style={{ background: color }} /> <span>{label}</span>
+      <i style={{ background: color }} />
+      <span title={label}>{formatDetectionLabel(label)}</span>
       <b>{value}</b>
     </div>
   );
@@ -504,7 +475,7 @@ function RankedThreats({ alerts = [], setActive }) {
           >
             <span className="rank">0{index + 1}</span>
             <div>
-              <b>{alert.label}</b>
+              <b title={alert.label}>{formatDetectionLabel(alert.label)}</b>
               <small className="mono">
                 {alert.src} · {alert.flows?.toLocaleString() || 1} flows
               </small>
@@ -526,7 +497,7 @@ function RecentAlerts({ alerts, setActive }) {
       <PanelTitle
         icon={Bell}
         title="Highest-risk alerts"
-        meta="top 250 incident groups"
+        meta={`${alerts.length} loaded`}
         action={
           <button className="text-button" onClick={() => setActive("Alerts")}>
             View all <ArrowUpRight size={14} />
@@ -537,7 +508,7 @@ function RecentAlerts({ alerts, setActive }) {
         {alerts.slice(0, 5).map((alert) => (
           <div className="mini-row" key={alert.id}>
             <span className={`severity ${alert.sev}`}>{alert.sev}</span>
-            <b>{alert.label}</b>
+            <b title={alert.label}>{formatDetectionLabel(alert.label)}</b>
             <span className="mono">{alert.src.split(":")[0]}</span>
             <span className="muted">{alert.time}</span>
             <Status status={alert.status} />
@@ -593,6 +564,12 @@ function metricsState(scan) {
 
 function UploadSummaryCard({ scan }) {
   const complete = scan?.status === "complete";
+  const threats = scan?.metrics?.threats;
+  const response = complete
+    ? threats == null ? "Completed" : `${threats.toLocaleString()} threats`
+    : scan?.status === "failed"
+      ? scan.error || "Scan failed"
+      : scan?.status ? "Scan in progress" : "Not started";
   return (
     <section className="panel compact-status-panel">
       <PanelTitle icon={Activity} title="Active scan" meta={scan?.stage || "idle"} />
@@ -607,85 +584,8 @@ function UploadSummaryCard({ scan }) {
         </div>
         <div>
           <small>Response</small>
-          <b>{complete ? `${scan.metrics.threats.toLocaleString()} awaiting review` : "Not started"}</b>
+          <b>{response}</b>
         </div>
-      </div>
-    </section>
-  );
-}
-
-function ReplayCard({ replay, setReplay, time }) {
-  return (
-    <section className="panel replay-panel">
-      <PanelTitle
-        icon={Play}
-        title="Replay engine"
-        meta="CIC-IDS-2017"
-        action={
-          <span className="status-tag">
-            <i className="status-dot green" /> running
-          </span>
-        }
-      />
-      <div className="replay-day">
-        <div>
-          <span>ACTIVE DATASET</span>
-          <strong>Friday-Afternoon-PortScan</strong>
-        </div>
-        <button
-          className="icon-button small"
-          onClick={() => setReplay(!replay)}
-        >
-          {replay ? <Pause size={14} /> : <Play size={14} />}
-        </button>
-      </div>
-      <div className="progress-track">
-        <i style={{ width: "68%" }} />
-      </div>
-      <div className="replay-meta">
-        <span>68.4% complete</span>
-        <span>10:42:18 UTC</span>
-      </div>
-      <div className="replay-stats">
-        <div>
-          <span>Throughput</span>
-          <b>
-            4,280 <small>flows/s</small>
-          </b>
-        </div>
-        <div>
-          <span>Speed</span>
-          <b>100×</b>
-        </div>
-        <div>
-          <span>Cursor</span>
-          <b>{time.toLocaleTimeString()}</b>
-        </div>
-      </div>
-    </section>
-  );
-}
-function PipelineHealth() {
-  return (
-    <section className="panel pipeline-panel">
-      <PanelTitle
-        icon={Workflow}
-        title="Agent pipeline health"
-        meta="15 steps"
-        action={
-          <span className="status-tag">
-            <i className="status-dot green" /> 13 healthy
-          </span>
-        }
-      />
-      <div className="pipeline-pills">
-        {workflow.map(([name, status, step]) => (
-          <div className={`pipeline-pill ${status}`} key={step}>
-            <span>{step}</span>
-            <b>{name}</b>
-            <i />
-          </div>
-        ))}
       </div>
     </section>
   );
